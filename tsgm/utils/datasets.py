@@ -15,6 +15,7 @@ import scipy.io.arff
 
 from tensorflow import keras
 
+from tsgm.utils import covid19_data_utils
 from tsgm.utils import file_utils
 
 
@@ -22,7 +23,7 @@ logger = logging.getLogger('utils')
 logger.setLevel(logging.DEBUG)
 
 
-def gen_sine_dataset(N, T, D, max_value=10):
+def gen_sine_dataset(N: int, T: int, D: int, max_value: int = 10) -> np.ndarray:
     result = []
     for i in range(N):
         result.append([])
@@ -35,7 +36,7 @@ def gen_sine_dataset(N, T, D, max_value=10):
     return np.transpose(np.array(result), [0, 2, 1])
 
 
-def gen_sine_const_switch_dataset(N, T, D, max_value=10, const=0, frequency_switch=0.1):
+def gen_sine_const_switch_dataset(N: int, T: int, D: int, max_value: int = 10, const: int = 0, frequency_switch: float = 0.1) -> tuple:
     result_X, result_y = [], []
     cur_y = 0
     scales = np.random.random(D) * max_value
@@ -185,14 +186,15 @@ def get_mauna_loa() -> tuple:
     return X, y
 
 
-def split_dataset_into_objects(X, y, step=10):
+def split_dataset_into_objects(X, y, step=10) -> tuple:
     assert X.shape[0] == y.shape[0]
 
     Xs, ys = [], []
     for start in range(0, X.shape[0], step):
         cur_x, cur_y = X[start:start + step], y[start:start + step]
         Xs.append(np.pad(cur_x, [(0, step - cur_x.shape[0]), (0, 0)]))
-        ys.append(np.pad(cur_y, step - cur_y.shape[0]))
+        ys.append(np.pad(cur_y, [(0, step - cur_y.shape[0])]))
+
     return np.array(Xs), np.array(ys)
 
 
@@ -292,13 +294,13 @@ def get_physionet2012() -> tuple:
     return train_X, train_y, test_X, test_y, val_X, val_y
 
 
-def download_physionet2012():
+def download_physionet2012() -> None:
     """
     Downloads the Physionet 2012 dataset files from the Physionet website
     and extracts them in local folder 'physionet2012'
     """
-    _base_url = "https://physionet.org/files/challenge-2012/1.0.0/"
-    _destination_folder = "physionet2012"
+    base_url = "https://physionet.org/files/challenge-2012/1.0.0/"
+    destination_folder = "physionet2012"
     X_a = "set-a.tar.gz"
     y_a = "Outcomes-a.txt"
 
@@ -308,18 +310,14 @@ def download_physionet2012():
     X_c = "set-c.tar.gz"
     y_c = "Outcomes-c.txt"
 
-    file_utils.download(_base_url + X_a, _destination_folder)
-    file_utils.download(_base_url + y_a, _destination_folder)
-    file_utils.download(_base_url + X_b, _destination_folder)
-    file_utils.download(_base_url + y_b, _destination_folder)
-    file_utils.download(_base_url + X_c, _destination_folder)
-    file_utils.download(_base_url + y_c, _destination_folder)
+    all_files = [(X_a, y_a), (X_b, y_b), (X_c, y_c)]
 
-    file_utils.extract_archive(_destination_folder + X_a, _destination_folder)
-    file_utils.extract_archive(_destination_folder + X_b, _destination_folder)
-    file_utils.extract_archive(_destination_folder + X_c, _destination_folder)
+    for X, y in all_files:
+        file_utils.download(base_url + X, destination_folder)
+        file_utils.download(base_url + y, destination_folder)
 
-    return
+    for X, y in all_files:
+        file_utils.extract_archive(os.path.join(destination_folder, X), destination_folder)
 
 
 def _get_physionet_X_dataframe(dataset_path: str) -> pd.DataFrame:
@@ -362,3 +360,39 @@ def _get_physionet_y_dataframe(file_path: str) -> pd.DataFrame:
     y.index.name = 'recordid'
     y.reset_index(inplace=True)
     return y
+
+
+def get_covid_19() -> tuple:
+    """
+    Loads Covid-19 dataset with additional graph information
+    The dataset is based on data from The New York Times, based on reports from state and local health agencies [1].
+
+    And was adapted to graph case in [2].
+    [1] The New York Times. (2021). Coronavirus (Covid-19) Data in the United States. Retrieved [Insert Date Here], from https://github.com/nytimes/covid-19-data.
+    [2] Alexander V. Nikitin, St John, Arno Solin, Samuel Kaski Proceedings of The 25th International Conference on Artificial Intelligence and Statistics, PMLR 151:10640-10660, 2022.
+
+    Returns:
+    -------
+    tuple
+        First element is time series data (n_nodes x n_timestamps x n_features). Each timestamp consists of
+        the number of deaths, cases, deaths normalized by the population, and cases normalized by the population.
+        The second element is the graph tuple (nodes, edges).
+        The third element is the order of states.
+    """
+    base_url = "https://raw.githubusercontent.com/nytimes/covid-19-data/master/us-states.csv"
+    destination_folder = "covid19"
+    file_utils.download(base_url, destination_folder)
+    result, graph = covid19_data_utils.covid_dataset(
+        os.path.join(destination_folder, "us-states.csv")
+    )
+
+    processed_dataset = []
+    for timestamp in result.keys():
+        processed_dataset.append([])
+        for state in covid19_data_utils.LIST_OF_STATES:
+            cur_data = result[timestamp][state]
+            processed_dataset[-1].append(
+                [cur_data["deaths"], cur_data["cases"],
+                 cur_data["deaths_normalized"], cur_data["cases_normalized"]]
+            )
+    return np.transpose(np.array(processed_dataset), (1, 0, 2)), graph, covid19_data_utils.LIST_OF_STATES
